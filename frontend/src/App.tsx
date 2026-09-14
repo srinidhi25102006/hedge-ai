@@ -10,7 +10,12 @@ import {
   Info, 
   AlertTriangle, 
   XCircle,
-  MessageSquare
+  MessageSquare,
+  User,
+  Edit3,
+  Trash2,
+  Check,
+  X
 } from 'lucide-react';
 
 interface EvidenceItem {
@@ -50,12 +55,86 @@ const PRESET_QUERIES = [
   { label: '🐍 Tell me about Python', query: "Tell me about Python.", type: 'Ambiguous' },
 ];
 
+const MAX_HISTORY_ITEMS = 20;
+
+// Safe localStorage helpers for private browsing resilience
+const safeGetItem = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    console.warn(`[Hedge Storage] Read failed for "${key}":`, e);
+    return null;
+  }
+};
+
+const safeSetItem = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.warn(`[Hedge Storage] Write failed for "${key}":`, e);
+  }
+};
+
+const safeRemoveItem = (key: string): void => {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    console.warn(`[Hedge Storage] Remove failed for "${key}":`, e);
+  }
+};
+
 export default function App() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [openEvidence, setOpenEvidence] = useState<Record<string, boolean>>({});
+
+  // Feature A: Anonymous Session Identity State
+  const [sessionId, setSessionId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('Guest');
+  const [isEditingName, setIsEditingName] = useState<boolean>(false);
+  const [nameInput, setNameInput] = useState<string>('');
+  const [showFirstTimeModal, setShowFirstTimeModal] = useState<boolean>(false);
+
+  // Initialize Session ID, User Name & Load Persisted History
+  useEffect(() => {
+    // 1. Session ID
+    let currentSessionId = safeGetItem('hedge_session_id');
+    if (!currentSessionId) {
+      currentSessionId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'sess_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+      safeSetItem('hedge_session_id', currentSessionId);
+    }
+    setSessionId(currentSessionId);
+
+    // 2. User Display Name
+    const savedName = safeGetItem('hedge_user_name');
+    if (savedName && savedName.trim()) {
+      setUserName(savedName.trim());
+    } else {
+      setUserName('Guest');
+      const prompted = safeGetItem('hedge_name_prompted');
+      if (!prompted) {
+        setShowFirstTimeModal(true);
+      }
+    }
+
+    // 3. Session Chat History
+    const historyKey = `hedge_history_${currentSessionId}`;
+    const savedHistoryRaw = safeGetItem(historyKey);
+    if (savedHistoryRaw) {
+      try {
+        const parsed = JSON.parse(savedHistoryRaw);
+        if (Array.isArray(parsed)) {
+          setMessages(parsed.slice(0, MAX_HISTORY_ITEMS));
+        }
+      } catch (e) {
+        console.error('[Hedge History] Error parsing stored history:', e);
+      }
+    }
+  }, []);
 
   // Simulate multi-stage pipeline progress feedback during loading
   useEffect(() => {
@@ -76,6 +155,28 @@ export default function App() {
 
   const toggleEvidence = (id: string) => {
     setOpenEvidence(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleSaveName = (newName: string) => {
+    const trimmed = newName.trim();
+    const finalName = trimmed || 'Guest';
+    setUserName(finalName);
+    safeSetItem('hedge_user_name', finalName);
+    safeSetItem('hedge_name_prompted', 'true');
+    setIsEditingName(false);
+    setShowFirstTimeModal(false);
+  };
+
+  const handleDismissFirstTimeModal = () => {
+    safeSetItem('hedge_name_prompted', 'true');
+    setShowFirstTimeModal(false);
+  };
+
+  const handleClearHistory = () => {
+    setMessages([]);
+    if (sessionId) {
+      safeRemoveItem(`hedge_history_${sessionId}`);
+    }
   };
 
   const handleSend = async (textToSend?: string) => {
@@ -131,7 +232,13 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
-      setMessages(prev => [newMsg, ...prev]);
+      setMessages(prev => {
+        const updated = [newMsg, ...prev].slice(0, MAX_HISTORY_ITEMS);
+        if (sessionId) {
+          safeSetItem(`hedge_history_${sessionId}`, JSON.stringify(updated));
+        }
+        return updated;
+      });
     } catch (err: any) {
       console.error('[Hedge UI] Error processing query:', err);
       const fallbackMsg: ChatMessage = {
@@ -148,7 +255,14 @@ export default function App() {
         },
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages(prev => [fallbackMsg, ...prev]);
+
+      setMessages(prev => {
+        const updated = [fallbackMsg, ...prev].slice(0, MAX_HISTORY_ITEMS);
+        if (sessionId) {
+          safeSetItem(`hedge_history_${sessionId}`, JSON.stringify(updated));
+        }
+        return updated;
+      });
     } finally {
       setLoading(false);
     }
@@ -170,6 +284,41 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      {/* First-Time Optional Name Prompt Modal */}
+      {showFirstTimeModal && (
+        <div className="modal-backdrop">
+          <div className="name-prompt-modal">
+            <div className="modal-header">
+              <h3>Welcome to Hedge 👋</h3>
+              <button className="icon-btn-close" onClick={handleDismissFirstTimeModal}>
+                <X size={16} />
+              </button>
+            </div>
+            <p className="modal-desc">
+              Would you like to set a display name for your session? (Stored locally in your browser only)
+            </p>
+            <form onSubmit={(e) => { e.preventDefault(); handleSaveName(nameInput); }} className="modal-form">
+              <input
+                type="text"
+                className="modal-input"
+                placeholder="Enter your name (e.g., Srini)..."
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                autoFocus
+              />
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={handleDismissFirstTimeModal}>
+                  Skip (Use Guest)
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Name
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="app-header">
         <div className="brand">
@@ -179,9 +328,52 @@ export default function App() {
             <p>Trust-Aware AI Agent with Measurable Signals</p>
           </div>
         </div>
-        <div className="status-pill">
-          <span className="dot-pulse"></span>
-          <span>Dual Signal Confidence Engine</span>
+
+        <div className="header-controls">
+          {/* User Identity Pill */}
+          <div className="user-identity-pill">
+            <User size={13} className="user-pill-icon" />
+            {isEditingName ? (
+              <form 
+                className="inline-name-form" 
+                onSubmit={(e) => { e.preventDefault(); handleSaveName(nameInput); }}
+              >
+                <input
+                  type="text"
+                  className="inline-name-input"
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  placeholder="Your name"
+                  autoFocus
+                />
+                <button type="submit" className="inline-icon-btn check-btn" title="Save">
+                  <Check size={12} />
+                </button>
+                <button 
+                  type="button" 
+                  className="inline-icon-btn cancel-btn" 
+                  onClick={() => setIsEditingName(false)}
+                  title="Cancel"
+                >
+                  <X size={12} />
+                </button>
+              </form>
+            ) : (
+              <button 
+                className="user-pill-btn" 
+                onClick={() => { setNameInput(userName); setIsEditingName(true); }}
+                title="Click to edit display name"
+              >
+                <span>Hi, <strong>{userName}</strong></span>
+                <Edit3 size={11} className="edit-icon" />
+              </button>
+            )}
+          </div>
+
+          <div className="status-pill">
+            <span className="dot-pulse"></span>
+            <span>Engine Ready</span>
+          </div>
         </div>
       </header>
 
@@ -202,6 +394,24 @@ export default function App() {
           ))}
         </div>
       </section>
+
+      {/* History Toolbar Header (Only when history exists) */}
+      {messages.length > 0 && (
+        <section className="history-toolbar">
+          <div className="history-info">
+            <span className="history-badge">Session Thread</span>
+            <span className="history-count">{messages.length} {messages.length === 1 ? 'exchange' : 'exchanges'} (Max 20)</span>
+          </div>
+          <button 
+            className="clear-history-btn" 
+            onClick={handleClearHistory}
+            title="Clear all stored session history"
+          >
+            <Trash2 size={13} />
+            <span>Clear History</span>
+          </button>
+        </section>
+      )}
 
       {/* Main Chat Container */}
       <main className="chat-container">
@@ -263,6 +473,7 @@ export default function App() {
                 <div className="user-query">
                   <span className="user-query-icon">Q</span>
                   <span>{msg.userQuery}</span>
+                  {msg.timestamp && <span className="query-timestamp">{msg.timestamp}</span>}
                 </div>
 
                 {/* Response Metadata & Badge */}
