@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { 
-  ShieldCheck, 
   Send, 
   Sparkles, 
   ExternalLink, 
@@ -15,6 +14,7 @@ import {
   Edit3,
   Trash2,
   Check,
+  CheckCircle2,
   X,
   ServerOff
 } from 'lucide-react';
@@ -137,20 +137,23 @@ export default function App() {
     }
   }, []);
 
-  // Simulate multi-stage pipeline progress feedback during loading
+  // Cycle through short sequence of static status messages during query execution
   useEffect(() => {
     let timer1: ReturnType<typeof setTimeout>;
     let timer2: ReturnType<typeof setTimeout>;
+    let timer3: ReturnType<typeof setTimeout>;
     if (loading) {
       setLoadingStage(0);
-      timer1 = setTimeout(() => setLoadingStage(1), 1800);
-      timer2 = setTimeout(() => setLoadingStage(2), 3600);
+      timer1 = setTimeout(() => setLoadingStage(1), 1500); // Stage 1: Generating & cross-checking (~1.5s)
+      timer2 = setTimeout(() => setLoadingStage(2), 3500); // Stage 2: Searching for evidence (~3.5s)
+      timer3 = setTimeout(() => setLoadingStage(3), 5500); // Stage 3: Finalizing score (~5.5s)
     } else {
       setLoadingStage(0);
     }
     return () => {
       clearTimeout(timer1);
       clearTimeout(timer2);
+      clearTimeout(timer3);
     };
   }, [loading]);
 
@@ -280,7 +283,7 @@ export default function App() {
   const getBadgeIcon = (label: string, queryType: string) => {
     if (label.includes('Service Unavailable')) return <ServerOff size={14} />;
     if (queryType === 'ambiguous') return <HelpCircle size={14} />;
-    if (label.includes('Very Confident') || label.includes('Confident')) return <ShieldCheck size={14} />;
+    if (label.includes('Very Confident') || label.includes('Confident')) return <CheckCircle2 size={14} />;
     if (label.includes('Uncertain') && !label.includes('Very')) return <AlertTriangle size={14} />;
     return <XCircle size={14} />;
   };
@@ -425,26 +428,31 @@ export default function App() {
               <div className="loading-spinner-ring"></div>
               <div className="loading-title-group">
                 <div className="loading-title">
-                  {loadingStage === 0 && "Evaluating initial sample consistency..."}
-                  {loadingStage === 1 && "Verifying web evidence with search grounding..."}
-                  {loadingStage >= 2 && "Fusing dual signals & generating final answer..."}
+                  {loadingStage === 0 && "Classifying your question..."}
+                  {loadingStage === 1 && "Generating and cross-checking answers..."}
+                  {loadingStage === 2 && "Searching for supporting evidence..."}
+                  {loadingStage >= 3 && "Finalizing confidence score..."}
                 </div>
-                <div className="loading-subtitle">Running confidence estimation pipeline</div>
+                <div className="loading-subtitle">Evaluating confidence & evidence signals</div>
               </div>
             </div>
 
             <div className="loading-pipeline-steps">
               <div className={`loading-step ${loadingStage >= 0 ? (loadingStage > 0 ? 'completed' : 'active') : ''}`}>
                 <span className="loading-step-dot"></span>
-                <span>1. Sampling Consistency</span>
+                <span>1. Classification</span>
               </div>
               <div className={`loading-step ${loadingStage >= 1 ? (loadingStage > 1 ? 'completed' : 'active') : ''}`}>
                 <span className="loading-step-dot"></span>
-                <span>2. Evidence Search</span>
+                <span>2. Multi-Sample Generation</span>
               </div>
-              <div className={`loading-step ${loadingStage >= 2 ? 'active' : ''}`}>
+              <div className={`loading-step ${loadingStage >= 2 ? (loadingStage > 2 ? 'completed' : 'active') : ''}`}>
                 <span className="loading-step-dot"></span>
-                <span>3. Signal Fusion</span>
+                <span>3. Evidence Grounding</span>
+              </div>
+              <div className={`loading-step ${loadingStage >= 3 ? 'active' : ''}`}>
+                <span className="loading-step-dot"></span>
+                <span>4. Signal Fusion</span>
               </div>
             </div>
           </div>
