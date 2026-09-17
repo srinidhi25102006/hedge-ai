@@ -607,6 +607,12 @@ h1, h2, h3, h4 {
   border: 1px solid var(--badge-blue-border);
 }
 
+.badge-service-unavailable {
+  background: #f3e8ff;
+  color: #6b21a8;
+  border: 1px solid #d8b4fe;
+}
+
 /* Main Answer Body */
 .answer-body {
   font-size: 1.05rem;
@@ -633,6 +639,32 @@ h1, h2, h3, h4 {
   color: #991b1b;
   font-size: 0.975rem;
   line-height: 1.6;
+}
+
+.service-error-box {
+  background: #fdf4ff;
+  border: 1px solid #f5d0fe;
+  border-left: 4px solid #a855f7;
+  padding: 1.1rem 1.25rem;
+  border-radius: 8px;
+  color: #581c87;
+  font-size: 0.975rem;
+  line-height: 1.6;
+}
+
+.service-error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #7e22ce;
+  margin-bottom: 0.4rem;
+}
+
+.service-error-icon {
+  color: #9333ea;
+  flex-shrink: 0;
 }
 
 /* Explanation Callout */

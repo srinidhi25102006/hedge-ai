@@ -56,10 +56,11 @@ cp backend/.env.example backend/.env
 ```
 Populate your keys in `backend/.env`:
 ```env
-OPENAI_API_KEY=your_openai_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
 TAVILY_API_KEY=your_tavily_api_key_here
+# OPENAI_API_KEY=your_openai_api_key_here (optional alternative)
 ```
-*(Note: If keys are omitted, Hedge runs in mock pipeline mode for demonstration purposes).*
+*(Note: Get a free Groq API key at [console.groq.com](https://console.groq.com). If `GROQ_API_KEY` is missing or invalid, Hedge reports a Service Unavailable error. To explicitly run in offline demonstration mode, set `DEMO_MODE=true` in `backend/.env`).*
 
 ### 2. Backend Setup
 ```bash

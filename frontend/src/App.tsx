@@ -15,7 +15,8 @@ import {
   Edit3,
   Trash2,
   Check,
-  X
+  X,
+  ServerOff
 } from 'lucide-react';
 
 interface EvidenceItem {
@@ -248,7 +249,7 @@ export default function App() {
           query_type: 'factual',
           answer: 'Unable to connect to backend server. Please ensure backend FastAPI server is running on http://localhost:8001 or http://localhost:8000.',
           confidence: 0.0,
-          label: 'Very Uncertain',
+          label: 'Service Unavailable',
           timeline: { initial: 0, after_search: 0, final: 0 },
           evidence: [],
           explanation: 'Backend connection error.',
@@ -269,6 +270,7 @@ export default function App() {
   };
 
   const getBadgeClass = (label: string, queryType: string) => {
+    if (label.includes('Service Unavailable')) return 'badge badge-service-unavailable';
     if (queryType === 'ambiguous') return 'badge badge-ambiguous';
     if (label.includes('Very Confident') || label.includes('Confident')) return 'badge badge-very-confident';
     if (label.includes('Uncertain') && !label.includes('Very')) return 'badge badge-uncertain';
@@ -276,6 +278,7 @@ export default function App() {
   };
 
   const getBadgeIcon = (label: string, queryType: string) => {
+    if (label.includes('Service Unavailable')) return <ServerOff size={14} />;
     if (queryType === 'ambiguous') return <HelpCircle size={14} />;
     if (label.includes('Very Confident') || label.includes('Confident')) return <ShieldCheck size={14} />;
     if (label.includes('Uncertain') && !label.includes('Very')) return <AlertTriangle size={14} />;
@@ -460,11 +463,12 @@ export default function App() {
         ) : (
           messages.map(msg => {
             const { response } = msg;
+            const isServiceUnavailable = response.label.includes('Service Unavailable');
             const isAmbiguous = response.query_type === 'ambiguous';
             const isCreative = response.query_type === 'creative';
             const isVeryUncertain = response.label.includes('Very Uncertain');
             const hasEvidence = response.evidence && response.evidence.length > 0;
-            const showEvidenceToggle = !isAmbiguous && !isCreative && hasEvidence;
+            const showEvidenceToggle = !isAmbiguous && !isCreative && !isServiceUnavailable && hasEvidence;
             const isEvidenceOpen = openEvidence[msg.id] || false;
 
             return (
@@ -493,7 +497,15 @@ export default function App() {
 
                 {/* Answer Content */}
                 <div className="answer-body">
-                  {isAmbiguous ? (
+                  {isServiceUnavailable ? (
+                    <div className="service-error-box">
+                      <div className="service-error-header">
+                        <ServerOff size={18} className="service-error-icon" />
+                        <strong>Technical Service Error</strong>
+                      </div>
+                      <p>{response.answer}</p>
+                    </div>
+                  ) : isAmbiguous ? (
                     <div className="answer-body-ambiguous">
                       {response.answer}
                     </div>
@@ -514,8 +526,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Timeline Component (Only for factual queries) */}
-                {!isAmbiguous && !isCreative && (
+                {/* Timeline Component (Only for factual queries when service is available) */}
+                {!isAmbiguous && !isCreative && !isServiceUnavailable && (
                   <div className="timeline-section">
                     <div className="timeline-title">Confidence Signals Breakdown</div>
                     <div className="timeline-steps">

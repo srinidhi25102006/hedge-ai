@@ -84,6 +84,25 @@ class QueryResponse(BaseModel):
 
 
 # Helper LLM calls
+def call_llm_chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> Optional[str]:
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",  # fast, free-tier friendly model
+            messages=messages,
+            temperature=temperature,
+            max_tokens=500
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Groq API call error: {e}")
+        return None
+
+
 def call_openai_chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> Optional[str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -101,6 +120,18 @@ def call_openai_chat(messages: List[Dict[str, str]], temperature: float = 0.7) -
     except Exception as e:
         print(f"OpenAI API call error: {e}")
         return None
+
+
+def service_unavailable_response(reason: str = "LLM API call failed") -> QueryResponse:
+    return QueryResponse(
+        query_type="factual",
+        answer="The AI service is temporarily unavailable and could not generate an answer for this query. Please try again in a moment.",
+        confidence=0.0,
+        label="Service Unavailable",
+        timeline={"initial": 0.0, "after_search": 0.0, "final": 0.0},
+        evidence=[],
+        explanation=reason
+    )
 
 
 def call_tavily_search(query: str) -> List[Dict[str, str]]:
@@ -131,7 +162,7 @@ def call_tavily_search(query: str) -> List[Dict[str, str]]:
     return []
 
 
-# Dynamic Fallback Pipeline for requests when API keys are omitted or OpenAI quota exhausted
+# Dynamic Fallback Pipeline for requests when DEMO_MODE=true is explicitly enabled
 def mock_pipeline(query: str) -> QueryResponse:
     q_lower = query.lower().strip()
     
@@ -276,21 +307,26 @@ async def root():
 async def process_query(req: QueryRequest):
     load_dotenv(override=True)
     query = req.query.strip()
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+    demo_mode = os.getenv("DEMO_MODE", "").strip().lower() in ("true", "1", "yes")
     
     print(f"[Hedge API] Processing query: '{query}'")
     if not query:
         raise HTTPException(status_code=400, detail="Query string cannot be empty.")
 
-    # Check if OpenAI API key is present; if not, use smart dynamic mock pipeline with Tavily search
-    if not openai_key:
+    # Check for DEMO_MODE: if explicitly enabled, run mock pipeline
+    if demo_mode:
         res = mock_pipeline(query)
         if tavily_key and res.query_type == "factual":
             live_sources = call_tavily_search(query)
             if live_sources:
                 res.evidence = live_sources
         return res
+
+    # Check if Groq API key is present; if not, return honest Service Unavailable state
+    if not groq_key:
+        return service_unavailable_response("GROQ_API_KEY is missing")
 
     # Step 1: Query Classification
     classification_prompt = [
@@ -311,16 +347,11 @@ async def process_query(req: QueryRequest):
         {"role": "user", "content": f"Query: {query}"}
     ]
     
-    raw_class = call_openai_chat(classification_prompt, temperature=0.0)
+    raw_class = call_llm_chat(classification_prompt, temperature=0.0)
     
-    # If OpenAI API call failed (quota limit / error), fall back immediately to dynamic pipeline + live Tavily
+    # If Groq API call failed (quota limit / network error / missing key), return honest Service Unavailable state
     if not raw_class:
-        res = mock_pipeline(query)
-        if tavily_key and res.query_type == "factual":
-            live_sources = call_tavily_search(query)
-            if live_sources:
-                res.evidence = live_sources
-        return res
+        return service_unavailable_response("LLM API call failed during classification")
 
     raw_class_clean = raw_class.lower().strip()
     if "ambiguous" in raw_class_clean:
@@ -339,7 +370,7 @@ async def process_query(req: QueryRequest):
             },
             {"role": "user", "content": query}
         ]
-        clarification = call_openai_chat(clarifying_prompt, temperature=0.3) or "Could you please specify which topic or interpretation you would like to know more about?"
+        clarification = call_llm_chat(clarifying_prompt, temperature=0.3) or "Could you please specify which topic or interpretation you would like to know more about?"
         return QueryResponse(
             query_type="ambiguous",
             answer=clarification,
@@ -358,14 +389,9 @@ async def process_query(req: QueryRequest):
         },
         {"role": "user", "content": query}
     ]
-    initial_answer = call_openai_chat(ans_prompt, temperature=0.7)
+    initial_answer = call_llm_chat(ans_prompt, temperature=0.7)
     if not initial_answer:
-        res = mock_pipeline(query)
-        if tavily_key and res.query_type == "factual":
-            live_sources = call_tavily_search(query)
-            if live_sources:
-                res.evidence = live_sources
-        return res
+        return service_unavailable_response("LLM API call failed during answer generation")
 
     # Step 5 Routing for Creative
     if query_type == "creative":
@@ -384,7 +410,7 @@ async def process_query(req: QueryRequest):
     # Signal 1: Semantic Consistency
     samples = [initial_answer]
     for _ in range(2):
-        samp = call_openai_chat(ans_prompt, temperature=0.7)
+        samp = call_llm_chat(ans_prompt, temperature=0.7)
         if samp:
             samples.append(samp)
     
