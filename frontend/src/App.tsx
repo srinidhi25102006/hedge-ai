@@ -39,6 +39,7 @@ interface QueryResponseData {
   timeline: TimelineData;
   evidence: EvidenceItem[];
   explanation: string;
+  raw_answer?: string | null;
 }
 
 interface ChatMessage {
@@ -88,6 +89,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState(0);
+  const [compareMode, setCompareMode] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [openEvidence, setOpenEvidence] = useState<Record<string, boolean>>({});
 
@@ -187,7 +189,7 @@ export default function App() {
     const targetQuery = (textToSend || query).trim();
     if (!targetQuery || loading) return;
 
-    console.log(`[Hedge UI] Dispatching query request: "${targetQuery}"`);
+    console.log(`[Hedge UI] Dispatching query request: "${targetQuery}" (compare_mode=${compareMode})`);
     setLoading(true);
     setQuery(''); // Always reset input box query state on submit
 
@@ -197,7 +199,7 @@ export default function App() {
         res = await fetch('/api/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: targetQuery }),
+          body: JSON.stringify({ query: targetQuery, compare_mode: compareMode }),
         });
       } catch (proxyErr) {
         console.warn('[Hedge UI] Vite proxy connection failed, trying direct backend ports...', proxyErr);
@@ -210,7 +212,7 @@ export default function App() {
             const fallbackRes = await fetch(`http://127.0.0.1:${port}/api/query`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: targetQuery }),
+              body: JSON.stringify({ query: targetQuery, compare_mode: compareMode }),
             });
             if (fallbackRes.ok) {
               res = fallbackRes;
@@ -256,6 +258,7 @@ export default function App() {
           timeline: { initial: 0, after_search: 0, final: 0 },
           evidence: [],
           explanation: 'Backend connection error.',
+          raw_answer: compareMode ? 'Unable to connect to backend server.' : null,
         },
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
@@ -478,9 +481,10 @@ export default function App() {
             const hasEvidence = response.evidence && response.evidence.length > 0;
             const showEvidenceToggle = !isAmbiguous && !isCreative && !isServiceUnavailable && hasEvidence;
             const isEvidenceOpen = openEvidence[msg.id] || false;
+            const hasRawAnswer = Boolean(response.raw_answer);
 
             return (
-              <div key={msg.id} className="message-card">
+              <div key={msg.id} className={`message-card ${hasRawAnswer ? 'message-card-comparison' : ''}`}>
                 {/* User Question */}
                 <div className="user-query">
                   <span className="user-query-icon">Q</span>
@@ -488,115 +492,248 @@ export default function App() {
                   {msg.timestamp && <span className="query-timestamp">{msg.timestamp}</span>}
                 </div>
 
-                {/* Response Metadata & Badge */}
-                <div className="agent-response-header">
-                  <span className="query-type-tag">
-                    {response.query_type} query
-                  </span>
-                  
-                  {/* Badge only shown if NOT ambiguous */}
-                  {!isAmbiguous && (
-                    <div className={getBadgeClass(response.label, response.query_type)}>
-                      {getBadgeIcon(response.label, response.query_type)}
-                      <span>{response.label} ({Math.round(response.confidence * 100)}%)</span>
+                {hasRawAnswer ? (
+                  <>
+                    {/* Comparison Top Caption */}
+                    <div className="comparison-caption-bar">
+                      <Sparkles size={14} className="caption-sparkle" />
+                      <span>Same question, two approaches — see the difference confidence-aware verification makes.</span>
                     </div>
-                  )}
-                </div>
 
-                {/* Answer Content */}
-                <div className="answer-body">
-                  {isServiceUnavailable ? (
-                    <div className="service-error-box">
-                      <div className="service-error-header">
-                        <ServerOff size={18} className="service-error-icon" />
-                        <strong>Technical Service Error</strong>
-                      </div>
-                      <p>{response.answer}</p>
-                    </div>
-                  ) : isAmbiguous ? (
-                    <div className="answer-body-ambiguous">
-                      {response.answer}
-                    </div>
-                  ) : isVeryUncertain ? (
-                    <div className="refusal-box">
-                      {response.answer}
-                    </div>
-                  ) : (
-                    <div>{response.answer}</div>
-                  )}
-                </div>
-
-                {/* Explanation Line */}
-                <div className="explanation-bar">
-                  <Info size={16} className="explanation-icon" />
-                  <div className="explanation-content">
-                    <strong>Explanation:</strong> {response.explanation}
-                  </div>
-                </div>
-
-                {/* Timeline Component (Only for factual queries when service is available) */}
-                {!isAmbiguous && !isCreative && !isServiceUnavailable && (
-                  <div className="timeline-section">
-                    <div className="timeline-title">Confidence Signals Breakdown</div>
-                    <div className="timeline-steps">
-                      <div className="timeline-step">
-                        <div className="timeline-step-header">
-                          <span className="timeline-step-label">1. Initial</span>
-                          <span className="timeline-step-val">{Math.round(response.timeline.initial * 100)}%</span>
+                    {/* Side-by-Side Comparison Container */}
+                    <div className="comparison-grid">
+                      {/* Left Panel: Raw AI Answer */}
+                      <div className="comparison-panel raw-ai-panel">
+                        <div className="panel-header raw-header">
+                          <span className="panel-title">🤖 Raw AI Answer</span>
+                          <span className="panel-subtitle">No verification • No confidence score</span>
                         </div>
-                        <div className="timeline-step-sublabel">how consistent the AI's own answers were</div>
-                        <div className="timeline-step-bar">
-                          <div className="timeline-step-fill" style={{ width: `${response.timeline.initial * 100}%` }}></div>
+                        <div className="panel-body raw-body">
+                          {response.raw_answer}
                         </div>
                       </div>
 
-                      <div className="timeline-step">
-                        <div className="timeline-step-header">
-                          <span className="timeline-step-label">2. After Search</span>
-                          <span className="timeline-step-val">{Math.round(response.timeline.after_search * 100)}%</span>
+                      {/* Right Panel: Hedge's Verified Answer */}
+                      <div className="comparison-panel hedge-ai-panel">
+                        <div className="panel-header hedge-header">
+                          <span className="panel-title">🛡️ Hedge's Verified Answer</span>
+                          {!isAmbiguous && (
+                            <div className={getBadgeClass(response.label, response.query_type)}>
+                              {getBadgeIcon(response.label, response.query_type)}
+                              <span>{response.label} ({Math.round(response.confidence * 100)}%)</span>
+                            </div>
+                          )}
                         </div>
-                        <div className="timeline-step-sublabel">how well evidence backed the answer</div>
-                        <div className="timeline-step-bar">
-                          <div className="timeline-step-fill" style={{ width: `${response.timeline.after_search * 100}%` }}></div>
-                        </div>
-                      </div>
 
-                      <div className="timeline-step">
-                        <div className="timeline-step-header">
-                          <span className="timeline-step-label">3. Final</span>
-                          <span className="timeline-step-val" style={{ color: '#059669' }}>{Math.round(response.timeline.final * 100)}%</span>
+                        <div className="answer-body">
+                          {isServiceUnavailable ? (
+                            <div className="service-error-box">
+                              <div className="service-error-header">
+                                <ServerOff size={18} className="service-error-icon" />
+                                <strong>Technical Service Error</strong>
+                              </div>
+                              <p>{response.answer}</p>
+                            </div>
+                          ) : isAmbiguous ? (
+                            <div className="answer-body-ambiguous">
+                              {response.answer}
+                            </div>
+                          ) : isVeryUncertain ? (
+                            <div className="refusal-box">
+                              {response.answer}
+                            </div>
+                          ) : (
+                            <div>{response.answer}</div>
+                          )}
                         </div>
-                        <div className="timeline-step-sublabel">combined score</div>
-                        <div className="timeline-step-bar">
-                          <div className="timeline-step-fill timeline-step-fill-final" style={{ width: `${response.timeline.final * 100}%` }}></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
-                {/* Collapsible Evidence Panel (Collapsed by default) */}
-                {showEvidenceToggle && (
-                  <div className="evidence-drawer">
-                    <button className="evidence-toggle" onClick={() => toggleEvidence(msg.id)}>
-                      <span>Verified Sources & Web Snippets ({response.evidence.length})</span>
-                      {isEvidenceOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </button>
-
-                    {isEvidenceOpen && (
-                      <div className="evidence-list">
-                        {response.evidence.map((item, idx) => (
-                          <div key={idx} className="evidence-card">
-                            <a href={item.url} target="_blank" rel="noopener noreferrer" className="evidence-card-title">
-                              <span>{item.title}</span>
-                              <ExternalLink size={12} />
-                            </a>
-                            <p className="evidence-card-snippet">"{item.snippet}"</p>
+                        {/* Explanation Line */}
+                        <div className="explanation-bar">
+                          <Info size={16} className="explanation-icon" />
+                          <div className="explanation-content">
+                            <strong>Explanation:</strong> {response.explanation}
                           </div>
-                        ))}
+                        </div>
+
+                        {/* Timeline Component */}
+                        {!isAmbiguous && !isCreative && !isServiceUnavailable && (
+                          <div className="timeline-section">
+                            <div className="timeline-title">Confidence Signals Breakdown</div>
+                            <div className="timeline-steps">
+                              <div className="timeline-step">
+                                <div className="timeline-step-header">
+                                  <span className="timeline-step-label">1. Initial</span>
+                                  <span className="timeline-step-val">{Math.round(response.timeline.initial * 100)}%</span>
+                                </div>
+                                <div className="timeline-step-sublabel">consistency</div>
+                                <div className="timeline-step-bar">
+                                  <div className="timeline-step-fill" style={{ width: `${response.timeline.initial * 100}%` }}></div>
+                                </div>
+                              </div>
+
+                              <div className="timeline-step">
+                                <div className="timeline-step-header">
+                                  <span className="timeline-step-label">2. Search</span>
+                                  <span className="timeline-step-val">{Math.round(response.timeline.after_search * 100)}%</span>
+                                </div>
+                                <div className="timeline-step-sublabel">grounding</div>
+                                <div className="timeline-step-bar">
+                                  <div className="timeline-step-fill" style={{ width: `${response.timeline.after_search * 100}%` }}></div>
+                                </div>
+                              </div>
+
+                              <div className="timeline-step">
+                                <div className="timeline-step-header">
+                                  <span className="timeline-step-label">3. Final</span>
+                                  <span className="timeline-step-val" style={{ color: '#059669' }}>{Math.round(response.timeline.final * 100)}%</span>
+                                </div>
+                                <div className="timeline-step-sublabel">fused score</div>
+                                <div className="timeline-step-bar">
+                                  <div className="timeline-step-fill timeline-step-fill-final" style={{ width: `${response.timeline.final * 100}%` }}></div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Collapsible Evidence Panel */}
+                        {showEvidenceToggle && (
+                          <div className="evidence-drawer">
+                            <button className="evidence-toggle" onClick={() => toggleEvidence(msg.id)}>
+                              <span>Verified Sources ({response.evidence.length})</span>
+                              {isEvidenceOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                            </button>
+
+                            {isEvidenceOpen && (
+                              <div className="evidence-list">
+                                {response.evidence.map((item, idx) => (
+                                  <div key={idx} className="evidence-card">
+                                    <a href={item.url} target="_blank" rel="noopener noreferrer" className="evidence-card-title">
+                                      <span>{item.title}</span>
+                                      <ExternalLink size={12} />
+                                    </a>
+                                    <p className="evidence-card-snippet">"{item.snippet}"</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Standard Single Mode Response Metadata & Badge */}
+                    <div className="agent-response-header">
+                      <span className="query-type-tag">
+                        {response.query_type} query
+                      </span>
+                      
+                      {!isAmbiguous && (
+                        <div className={getBadgeClass(response.label, response.query_type)}>
+                          {getBadgeIcon(response.label, response.query_type)}
+                          <span>{response.label} ({Math.round(response.confidence * 100)}%)</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Answer Content */}
+                    <div className="answer-body">
+                      {isServiceUnavailable ? (
+                        <div className="service-error-box">
+                          <div className="service-error-header">
+                            <ServerOff size={18} className="service-error-icon" />
+                            <strong>Technical Service Error</strong>
+                          </div>
+                          <p>{response.answer}</p>
+                        </div>
+                      ) : isAmbiguous ? (
+                        <div className="answer-body-ambiguous">
+                          {response.answer}
+                        </div>
+                      ) : isVeryUncertain ? (
+                        <div className="refusal-box">
+                          {response.answer}
+                        </div>
+                      ) : (
+                        <div>{response.answer}</div>
+                      )}
+                    </div>
+
+                    {/* Explanation Line */}
+                    <div className="explanation-bar">
+                      <Info size={16} className="explanation-icon" />
+                      <div className="explanation-content">
+                        <strong>Explanation:</strong> {response.explanation}
+                      </div>
+                    </div>
+
+                    {/* Timeline Component */}
+                    {!isAmbiguous && !isCreative && !isServiceUnavailable && (
+                      <div className="timeline-section">
+                        <div className="timeline-title">Confidence Signals Breakdown</div>
+                        <div className="timeline-steps">
+                          <div className="timeline-step">
+                            <div className="timeline-step-header">
+                              <span className="timeline-step-label">1. Initial</span>
+                              <span className="timeline-step-val">{Math.round(response.timeline.initial * 100)}%</span>
+                            </div>
+                            <div className="timeline-step-sublabel">how consistent the AI's own answers were</div>
+                            <div className="timeline-step-bar">
+                              <div className="timeline-step-fill" style={{ width: `${response.timeline.initial * 100}%` }}></div>
+                            </div>
+                          </div>
+
+                          <div className="timeline-step">
+                            <div className="timeline-step-header">
+                              <span className="timeline-step-label">2. After Search</span>
+                              <span className="timeline-step-val">{Math.round(response.timeline.after_search * 100)}%</span>
+                            </div>
+                            <div className="timeline-step-sublabel">how well evidence backed the answer</div>
+                            <div className="timeline-step-bar">
+                              <div className="timeline-step-fill" style={{ width: `${response.timeline.after_search * 100}%` }}></div>
+                            </div>
+                          </div>
+
+                          <div className="timeline-step">
+                            <div className="timeline-step-header">
+                              <span className="timeline-step-label">3. Final</span>
+                              <span className="timeline-step-val" style={{ color: '#059669' }}>{Math.round(response.timeline.final * 100)}%</span>
+                            </div>
+                            <div className="timeline-step-sublabel">combined score</div>
+                            <div className="timeline-step-bar">
+                              <div className="timeline-step-fill timeline-step-fill-final" style={{ width: `${response.timeline.final * 100}%` }}></div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
-                  </div>
+
+                    {/* Collapsible Evidence Panel */}
+                    {showEvidenceToggle && (
+                      <div className="evidence-drawer">
+                        <button className="evidence-toggle" onClick={() => toggleEvidence(msg.id)}>
+                          <span>Verified Sources & Web Snippets ({response.evidence.length})</span>
+                          {isEvidenceOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+
+                        {isEvidenceOpen && (
+                          <div className="evidence-list">
+                            {response.evidence.map((item, idx) => (
+                              <div key={idx} className="evidence-card">
+                                <a href={item.url} target="_blank" rel="noopener noreferrer" className="evidence-card-title">
+                                  <span>{item.title}</span>
+                                  <ExternalLink size={12} />
+                                </a>
+                                <p className="evidence-card-snippet">"{item.snippet}"</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
@@ -606,6 +743,19 @@ export default function App() {
 
       {/* Sticky Input Footer */}
       <footer className="input-sticky-footer">
+        <div className="compare-toggle-bar">
+          <label className="compare-toggle-label" title="Compare raw unverified LLM output with Hedge's verified pipeline">
+            <input
+              type="checkbox"
+              className="compare-toggle-checkbox"
+              checked={compareMode}
+              onChange={(e) => setCompareMode(e.target.checked)}
+            />
+            <span className="compare-toggle-switch"></span>
+            <span className="compare-toggle-text">⚡ Compare with raw AI</span>
+          </label>
+        </div>
+
         <form className="query-form" onSubmit={(e) => { e.preventDefault(); handleSend(); }}>
           <input
             type="text"

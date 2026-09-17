@@ -72,6 +72,7 @@ def compute_mean_pairwise_similarity(embeddings: List[np.ndarray]) -> float:
 
 class QueryRequest(BaseModel):
     query: str
+    compare_mode: Optional[bool] = False
 
 class QueryResponse(BaseModel):
     query_type: str
@@ -81,6 +82,7 @@ class QueryResponse(BaseModel):
     timeline: Dict[str, float]
     evidence: List[Dict[str, str]]
     explanation: str
+    raw_answer: Optional[str] = None
 
 
 # Helper LLM calls
@@ -103,6 +105,35 @@ def call_llm_chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> O
         return None
 
 
+def call_raw_llm(query: str) -> str:
+    prompt = [
+        {"role": "system", "content": "Answer the user's question directly and confidently."},
+        {"role": "user", "content": query}
+    ]
+    try:
+        ans = call_llm_chat(prompt, temperature=0.7)
+        return ans if ans else "Raw LLM call unavailable"
+    except Exception as e:
+        print(f"Raw LLM call error: {e}")
+        return "Raw LLM call unavailable"
+
+
+def get_mock_raw_answer(query: str) -> str:
+    q_lower = query.lower().strip()
+    if any(k in q_lower for k in ["quantum chip", "secret", "proprietary", "apple's 2029"]):
+        return "Apple's 2029 quantum chip is internally codenamed 'Project BionicQ'. It features a 128-qubit architecture integrated directly into Apple Silicon for real-time quantum encryption."
+    if "mobile" in q_lower and ("traffic" in q_lower or "share" in q_lower or "q3" in q_lower):
+        return "Global mobile web traffic share reached exactly 58.4% in Q3 2026, representing a 3.2% increase from previous quarters."
+    if "capital of france" in q_lower or ("france" in q_lower and "capital" in q_lower):
+        return "The capital of France is Paris."
+    if "python" in q_lower:
+        return "Python is a high-level, interpreted programming language known for its easy readability and dynamic typing."
+    if "haiku" in q_lower:
+        return "Soft drops from the sky,\nWater falls upon the ground,\nNature wakes refreshed."
+    clean_topic = query.strip().rstrip("?").strip()
+    return f"Regarding '{clean_topic}': This topic is fully documented and confirmed as standard factual information."
+
+
 def call_openai_chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> Optional[str]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -122,7 +153,7 @@ def call_openai_chat(messages: List[Dict[str, str]], temperature: float = 0.7) -
         return None
 
 
-def service_unavailable_response(reason: str = "LLM API call failed") -> QueryResponse:
+def service_unavailable_response(reason: str = "LLM API call failed", raw_answer: Optional[str] = None) -> QueryResponse:
     return QueryResponse(
         query_type="factual",
         answer="The AI service is temporarily unavailable and could not generate an answer for this query. Please try again in a moment.",
@@ -130,7 +161,8 @@ def service_unavailable_response(reason: str = "LLM API call failed") -> QueryRe
         label="Service Unavailable",
         timeline={"initial": 0.0, "after_search": 0.0, "final": 0.0},
         evidence=[],
-        explanation=reason
+        explanation=reason,
+        raw_answer=raw_answer
     )
 
 
@@ -310,10 +342,21 @@ async def process_query(req: QueryRequest):
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     demo_mode = os.getenv("DEMO_MODE", "").strip().lower() in ("true", "1", "yes")
+    compare_mode = bool(req.compare_mode)
     
-    print(f"[Hedge API] Processing query: '{query}'")
+    print(f"[Hedge API] Processing query: '{query}' (compare_mode={compare_mode})")
     if not query:
         raise HTTPException(status_code=400, detail="Query string cannot be empty.")
+
+    # Execute separate raw LLM call if compare_mode is requested
+    raw_answer_val = None
+    if compare_mode:
+        if groq_key:
+            raw_answer_val = call_raw_llm(query)
+        elif demo_mode:
+            raw_answer_val = get_mock_raw_answer(query)
+        else:
+            raw_answer_val = "Raw LLM call unavailable (GROQ_API_KEY missing)"
 
     # Check for DEMO_MODE: if explicitly enabled, run mock pipeline
     if demo_mode:
@@ -322,11 +365,13 @@ async def process_query(req: QueryRequest):
             live_sources = call_tavily_search(query)
             if live_sources:
                 res.evidence = live_sources
+        if compare_mode:
+            res.raw_answer = raw_answer_val
         return res
 
     # Check if Groq API key is present; if not, return honest Service Unavailable state
     if not groq_key:
-        return service_unavailable_response("GROQ_API_KEY is missing")
+        return service_unavailable_response("GROQ_API_KEY is missing", raw_answer=raw_answer_val if compare_mode else None)
 
     # Step 1: Query Classification
     classification_prompt = [
@@ -351,7 +396,7 @@ async def process_query(req: QueryRequest):
     
     # If Groq API call failed (quota limit / network error / missing key), return honest Service Unavailable state
     if not raw_class:
-        return service_unavailable_response("LLM API call failed during classification")
+        return service_unavailable_response("LLM API call failed during classification", raw_answer=raw_answer_val if compare_mode else None)
 
     raw_class_clean = raw_class.lower().strip()
     if "ambiguous" in raw_class_clean:
@@ -378,7 +423,8 @@ async def process_query(req: QueryRequest):
             label="Ambiguous Query",
             timeline={"initial": 0.0, "after_search": 0.0, "final": 0.0},
             evidence=[],
-            explanation="Query classified as ambiguous. Clarification requested."
+            explanation="Query classified as ambiguous. Clarification requested.",
+            raw_answer=raw_answer_val if compare_mode else None
         )
 
     # Step 2: Answer Generation (Primary)
@@ -391,7 +437,7 @@ async def process_query(req: QueryRequest):
     ]
     initial_answer = call_llm_chat(ans_prompt, temperature=0.7)
     if not initial_answer:
-        return service_unavailable_response("LLM API call failed during answer generation")
+        return service_unavailable_response("LLM API call failed during answer generation", raw_answer=raw_answer_val if compare_mode else None)
 
     # Step 5 Routing for Creative
     if query_type == "creative":
@@ -402,7 +448,8 @@ async def process_query(req: QueryRequest):
             label="Confident",
             timeline={"initial": 1.0, "after_search": 1.0, "final": 1.0},
             evidence=[],
-            explanation="Creative response generated directly without web search."
+            explanation="Creative response generated directly without web search.",
+            raw_answer=raw_answer_val if compare_mode else None
         )
 
     # Step 3: Confidence Estimation for Factual Queries
@@ -497,5 +544,6 @@ async def process_query(req: QueryRequest):
             "final": confidence
         },
         evidence=evidence_results,
-        explanation=explanation_text
+        explanation=explanation_text,
+        raw_answer=raw_answer_val if compare_mode else None
     )
