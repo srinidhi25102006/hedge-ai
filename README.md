@@ -50,17 +50,30 @@ hedge/
 - Node.js v18+ & npm
 
 ### 1. Environment Configuration
-Copy `.env.example` to `.env` inside `backend/`:
-```bash
-cp backend/.env.example backend/.env
-```
-Populate your keys in `backend/.env`:
-```env
-GROQ_API_KEY=your_groq_api_key_here
-TAVILY_API_KEY=your_tavily_api_key_here
-# OPENAI_API_KEY=your_openai_api_key_here (optional alternative)
-```
-*(Note: Get a free Groq API key at [console.groq.com](https://console.groq.com). If `GROQ_API_KEY` is missing or invalid, Hedge reports a Service Unavailable error. To explicitly run in offline demonstration mode, set `DEMO_MODE=true` in `backend/.env`).*
+
+#### Setting up your API keys
+> [!IMPORTANT]
+> **Understanding `.env` vs `.env.example`**:
+> - `backend/.env.example`: A template file containing **placeholder values only**. This file is committed to git repository history. **Do NOT put real API keys in `.env.example`.**
+> - `backend/.env`: The local environment file where your **REAL private API keys** belong. This file is listed in `.gitignore` and is **NEVER committed to git**.
+
+To set up your local environment:
+1. Copy `.env.example` to `.env` inside `backend/`:
+   - **Linux/macOS (bash/zsh)**:
+     ```bash
+     cp backend/.env.example backend/.env
+     ```
+   - **Windows (PowerShell / Command Prompt)**:
+     ```cmd
+     copy backend\.env.example backend\.env
+     ```
+2. Open `backend/.env` and replace the placeholder values with your real API keys:
+   ```env
+   GROQ_API_KEY=your_actual_groq_api_key
+   TAVILY_API_KEY=your_actual_tavily_api_key
+   # OPENAI_API_KEY=your_actual_openai_api_key (optional alternative)
+   ```
+   *(Note: Get a free Groq API key at [console.groq.com](https://console.groq.com). If `GROQ_API_KEY` is missing, Hedge returns an honest Service Unavailable state. To explicitly run offline demo mode, set `DEMO_MODE=true` in `backend/.env`).*
 
 ### 2. Backend Setup
 ```bash
@@ -77,13 +90,19 @@ uvicorn main:app --reload --port 8000
 Backend runs at: `http://localhost:8000`
 
 ### 3. Frontend Setup
-In a new terminal:
+In a new terminal window:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 Frontend runs at: `http://localhost:3000`
+
+> [!NOTE]
+> **Frontend Port Management & `strictPort`**:
+> - `frontend/vite.config.ts` is configured with `strictPort: true`.
+> - If port `3000` is already occupied by a stale frontend process, Vite will **fail explicitly** with an error (rather than silently auto-incrementing to `3001` or `3002`).
+> - If you receive a port error when starting the frontend, close any duplicate/stale terminal windows running Vite or terminate processes occupying port 3000 before running `npm run dev`.
 
 ---
 
