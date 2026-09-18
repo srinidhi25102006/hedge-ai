@@ -83,6 +83,7 @@ class QueryResponse(BaseModel):
     evidence: List[Dict[str, str]]
     explanation: str
     raw_answer: Optional[str] = None
+    sample_disagreement: Optional[List[str]] = None
 
 
 # Helper LLM calls
@@ -255,7 +256,12 @@ def mock_pipeline(query: str) -> QueryResponse:
             label="Very Uncertain",
             timeline={"initial": 0.35, "after_search": 0.05, "final": 0.20},
             evidence=[],
-            explanation="Only 1 of 3 sampled answers agreed; 0 of 3 claims found supporting sources."
+            explanation="Only 1 of 3 sampled answers agreed; 0 of 3 claims found supporting sources.",
+            sample_disagreement=[
+                "Apple's 2029 quantum chip is codenamed Project BionicQ and features a 128-qubit quantum processor.",
+                "Internal leaks suggest the 2029 chip is named Apple Q1, focusing on ultra-low power lattice cryptography.",
+                "No public information exists regarding Apple's 2029 quantum chip architecture or internal codename."
+            ]
         )
 
     # 5. Medium confidence factual preset (Mobile traffic share)
@@ -278,7 +284,12 @@ def mock_pipeline(query: str) -> QueryResponse:
                     "snippet": "Mobile market share fluctuated around 58.2% across global markets in recent quarterly tracking."
                 }
             ],
-            explanation="2 of 3 sampled answers agreed; 1 of 2 claims found supporting sources."
+            explanation="2 of 3 sampled answers agreed; 1 of 2 claims found supporting sources.",
+            sample_disagreement=[
+                "Global mobile traffic share is reported at 54.8% according to recent Statista tracking.",
+                "Industry analytics from StatCounter estimate global mobile web traffic share at 58.2%.",
+                "Mobile devices account for approximately 51.5% of total internet traffic across major global markets."
+            ]
         )
 
     # 6. Specific free-text query handling for ChatGPT
@@ -471,6 +482,13 @@ async def process_query(req: QueryRequest):
             agreed_count += 1
             
     initial_timeline_val = round(consistency_score, 2)
+    
+    sample_disagreement_list = None
+    if consistency_score < 0.70 and len(samples) > 1:
+        sample_disagreement_list = [
+            s[:150] + "..." if len(s) > 150 else s
+            for s in samples
+        ]
 
     # Signal 2: Evidence Grounding
     evidence_results = call_tavily_search(query)
@@ -545,5 +563,6 @@ async def process_query(req: QueryRequest):
         },
         evidence=evidence_results,
         explanation=explanation_text,
-        raw_answer=raw_answer_val if compare_mode else None
+        raw_answer=raw_answer_val if compare_mode else None,
+        sample_disagreement=sample_disagreement_list
     )

@@ -40,6 +40,7 @@ interface QueryResponseData {
   evidence: EvidenceItem[];
   explanation: string;
   raw_answer?: string | null;
+  sample_disagreement?: string[] | null;
 }
 
 interface ChatMessage {
@@ -92,6 +93,7 @@ export default function App() {
   const [compareMode, setCompareMode] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [openEvidence, setOpenEvidence] = useState<Record<string, boolean>>({});
+  const [openDisagreements, setOpenDisagreements] = useState<Record<string, boolean>>({});
 
   // Feature A: Anonymous Session Identity State
   const [sessionId, setSessionId] = useState<string>('');
@@ -161,6 +163,38 @@ export default function App() {
 
   const toggleEvidence = (id: string) => {
     setOpenEvidence(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleDisagreements = (id: string) => {
+    setOpenDisagreements(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const renderDisagreementDrawer = (msgId: string, disagreementList?: string[] | null) => {
+    if (!disagreementList || disagreementList.length === 0) return null;
+    const isDisagreementOpen = openDisagreements[msgId] || false;
+
+    return (
+      <div className="disagreement-drawer">
+        <button className="disagreement-toggle" onClick={() => toggleDisagreements(msgId)}>
+          <div className="disagreement-toggle-title">
+            <HelpCircle size={14} className="disagreement-icon" />
+            <span>See what the AI's different attempts said ({disagreementList.length})</span>
+          </div>
+          {isDisagreementOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+        </button>
+
+        {isDisagreementOpen && (
+          <div className="disagreement-list">
+            {disagreementList.map((sampleText, idx) => (
+              <div key={idx} className="disagreement-card">
+                <span className="disagreement-attempt-badge">Attempt {idx + 1}</span>
+                <p className="disagreement-text">"{sampleText}"</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleSaveName = (newName: string) => {
@@ -596,6 +630,9 @@ export default function App() {
                           </div>
                         )}
 
+                        {/* Sample Disagreement Drawer (Only rendered when consistency < 0.70) */}
+                        {renderDisagreementDrawer(msg.id, response.sample_disagreement)}
+
                         {/* Collapsible Evidence Panel */}
                         {showEvidenceToggle && (
                           <div className="evidence-drawer">
@@ -709,6 +746,9 @@ export default function App() {
                         </div>
                       </div>
                     )}
+
+                    {/* Sample Disagreement Drawer (Only rendered when consistency < 0.70) */}
+                    {renderDisagreementDrawer(msg.id, response.sample_disagreement)}
 
                     {/* Collapsible Evidence Panel */}
                     {showEvidenceToggle && (
